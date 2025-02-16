@@ -1,5 +1,6 @@
 import { useParams } from "@solidjs/router";
 import { onMount } from "solid-js";
+import QRGenerator from "~/components/QRCodeGenerator";
 import StudentList from "~/components/StudentList";
 import { formData, setFormData } from "~/lib/store";
 
@@ -21,6 +22,7 @@ export default function LessonPage() {
 			<p>{formData().subject}</p>
 			<p>{formData().cabinet}</p>
 			<StudentList />
+			<QRGenerator text="text" />
 		</main>
 	);
 }

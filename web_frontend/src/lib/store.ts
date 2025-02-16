@@ -11,3 +11,5 @@ export const [formData, setFormData] = createSignal<formDataInterface>({
 	subject: "",
 	cabinet: "",
 });
+
+export const [sessionID, setSessionID] = createSignal<string>("");

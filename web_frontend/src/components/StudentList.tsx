@@ -1,5 +1,6 @@
 import { useParams } from "@solidjs/router";
 import { Component, createSignal, For, onCleanup, onMount } from "solid-js";
+import { setSessionID } from "~/lib/store";
 
 const StudentList: Component = () => {
 	const [users, setUsers] = createSignal<string[]>([]);
@@ -8,6 +9,8 @@ const StudentList: Component = () => {
 
 	onMount(() => {
 		if (typeof window === "undefined") return;
+
+		setSessionID(id);
 
 		ws = new WebSocket(`ws://localhost:8080/ws?session=${id}`);
 

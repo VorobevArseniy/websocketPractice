@@ -9,8 +9,11 @@
   "dependencies": {
     "@solidjs/router": "^0.15.0",
     "@solidjs/start": "^1.1.0",
+    "@types/qrcode": "^1.5.5",
     "nanoid": "^5.1.0",
+    "qrcode": "^1.5.4",
     "solid-js": "^1.9.2",
+    "solid-qr": "^1.0.3",
     "vinxi": "^0.5.3"
   },
   "devDependencies": {
