@@ -1,0 +1,8 @@
+{
+	"bracketSameLine": true,
+	"enableDebugLogs": true,
+	"jsxSingleQuote": false,
+	"singleQuote": false,
+	"useTabs": true,
+	"prettier.tabWidth": 4
+}
