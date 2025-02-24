@@ -11,55 +11,122 @@ import (
 	"github.com/coder/websocket"
 )
 
-type User struct {
-	ID string `json:"id"`
+func main() {
+	r := http.NewServeMux()
+
+	r.HandleFunc("/ws", wsHandlerr)
+	r.HandleFunc("POST /student", handleFuncWraper(handleAddStudent))
+
+	log.Println("Server started~")
+	log.Fatal(http.ListenAndServe(":8080", r))
+
+	// r.HandleFunc("/ws")
+}
+
+type Student struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type StudentReq struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func handleAddStudent(w http.ResponseWriter, r *http.Request) error {
+	sessionID := r.URL.Query().Get("sessionID")
+	if sessionID == "" {
+		return fmt.Errorf("error session ID is requred")
+	}
+
+	req := &Student{}
+
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		return fmt.Errorf("error decoding request body: %w", err)
+	}
+
+	mutex.Lock()
+	session, exists := Sessions[sessionID]
+	if !exists {
+		mutex.Unlock()
+		return fmt.Errorf("session not exists")
+
+	}
+
+	session.Students = append(session.Students, req)
+
+	res, _ := json.Marshal(req)
+	Broadcast(session, r.Context(), res)
+	mutex.Unlock()
+
+	return nil
+}
+
+func Broadcast(session *Session, ctx context.Context, message []byte) {
+	for conn := range session.Connections {
+		err := conn.Write(ctx, websocket.MessageText, message)
+		if err != nil {
+			log.Println("error sending message: %w")
+		}
+	}
 }
 
 type Session struct {
-	Users       []string
+	TeacherID   string
+	Students    []*Student
 	Connections map[*websocket.Conn]bool
 }
 
 var (
-	sessions = make(map[string]*Session) // Хранилище сессий (sessionID -> Session)
+	Sessions = make(map[string]*Session)
 	mutex    = sync.Mutex{}
 )
 
-func wsHandler(w http.ResponseWriter, r *http.Request) error {
+func wsHandlerr(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session")
-	if sessionID == "" {
-		http.Error(w, "Session ID is required", http.StatusBadRequest)
-		return nil
+	teacherID := r.URL.Query().Get("teacher")
+
+	if sessionID == "" || teacherID == "" {
+		http.Error(w, "session ID and/or teacher ID is requred", http.StatusNotFound)
+		return
 	}
 
-	// Устанавливаем WebSocket-соединение
+	mutex.Lock()
+	if session, exists := Sessions[sessionID]; exists && session.TeacherID == teacherID {
+		mutex.Unlock()
+		http.Error(w, fmt.Sprintf("%s", sessionID), http.StatusConflict)
+		return
+	}
+	mutex.Unlock()
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		return fmt.Errorf("error accepting connection: %w", err)
+		http.Error(w, fmt.Sprintln("error connecting websocket:", err), http.StatusBadRequest)
+		return
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer conn.Close(websocket.StatusAbnormalClosure, "")
 
-	// Добавляем соединение в сессию
 	mutex.Lock()
-	if _, exists := sessions[sessionID]; !exists {
-		sessions[sessionID] = &Session{
-			Users:       []string{},
+	session, exists := Sessions[sessionID]
+	if !exists {
+		Sessions[sessionID] = &Session{
+			TeacherID:   teacherID,
+			Students:    []*Student{},
 			Connections: make(map[*websocket.Conn]bool),
 		}
 	}
-	session := sessions[sessionID]
-	session.Connections[conn] = true
+	log.Println(Sessions[sessionID].TeacherID)
 	mutex.Unlock()
 
-	// Отправляем текущий список пользователей клиенту
-	initialData, _ := json.Marshal(session.Users)
-	conn.Write(r.Context(), websocket.MessageText, initialData)
+	students := Sessions[sessionID].Students
 
-	// Читаем сообщения от клиента
+	msg, _ := json.Marshal(students)
+	conn.Write(r.Context(), websocket.MessageText, msg)
+
 	for {
-		_, data, err := conn.Read(r.Context())
+		_, _, err := conn.Read(r.Context())
 		if websocket.CloseStatus(err) != -1 {
 			break
 		}
@@ -67,121 +134,21 @@ func wsHandler(w http.ResponseWriter, r *http.Request) error {
 			log.Println("error reading message:", err)
 			break
 		}
-
-		// Добавляем нового пользователя
-		mutex.Lock()
-		session.Users = append(session.Users, string(data))
-		broadcast(session, r.Context(), data) // Рассылаем новый ID участникам сессии
-		mutex.Unlock()
 	}
 
-	// Удаляем соединение при закрытии
 	mutex.Lock()
 	delete(session.Connections, conn)
-	mutex.Unlock()
-	return nil
+
 }
 
-func broadcast(session *Session, ctx context.Context, message []byte) {
-	for conn := range session.Connections {
-		err := conn.Write(ctx, websocket.MessageText, message)
-		if err != nil {
-			log.Println("error sending message:", err)
-		}
-	}
-}
+type APIFunc func(w http.ResponseWriter, r *http.Request) error
 
-func handleAddUserToSession(w http.ResponseWriter, r *http.Request) error {
-	sessionID := r.URL.Query().Get("sessionID")
-	if sessionID == "" {
-		return fmt.Errorf("error empty session ID")
-	}
-
-	var requestData struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&requestData); err != nil {
-		return fmt.Errorf("error decoding request body: %w", err)
-	}
-
-	mutex.Lock()
-	session, exists := sessions[sessionID]
-	if !exists {
-		session = &Session{
-			Users:       []string{},
-			Connections: make(map[*websocket.Conn]bool),
-		}
-		sessions[sessionID] = session
-	}
-	session.Users = append(session.Users, requestData.ID)
-
-	res, _ := json.Marshal(requestData)
-	broadcast(session, r.Context(), res)
-	mutex.Unlock()
-
-	return writeResponse(w, "nice", http.StatusOK)
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "*") // Replace "*" with specific origins if needed
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
-		w.Header().Set("Access-Control-Allow-Credentials", "false") // Set to "true" if credentials are required
-
-		// Handle preflight OPTIONS requests
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		// Proceed with the next handler
-		next.ServeHTTP(w, r)
-	})
-}
-
-const (
-	port = ":8080"
-)
-
-func main() {
-	r := http.NewServeMux()
-
-	stack := createStack(corsMiddleware)
-
-	r.HandleFunc("/ws", handleFuncWrapper(wsHandler))
-	r.HandleFunc("POST /adduser", handleFuncWrapper(handleAddUserToSession))
-
-	log.Println("server started at port", port, "~")
-	log.Fatal(http.ListenAndServe(port, stack(r)))
-}
-
-type APIfunc func(w http.ResponseWriter, r *http.Request) error
-
-func handleFuncWrapper(f APIfunc) http.HandlerFunc {
+func handleFuncWraper(f APIFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := f(w, r); err != nil {
 			log.Println(err)
-			http.Error(w, fmt.Sprint(err), http.StatusBadRequest)
+			http.Error(w, fmt.Sprint(err), http.StatusOK)
+
 		}
-	}
-}
-
-func writeResponse(w http.ResponseWriter, res any, status int) error {
-	w.Header().Add("Content-type", "application/json")
-	w.WriteHeader(status)
-	return json.NewEncoder(w).Encode(res)
-}
-
-type mw func(http.Handler) http.Handler
-
-func createStack(xs ...mw) mw {
-	return func(next http.Handler) http.Handler {
-		for i := len(xs) - 1; i >= 0; i-- {
-			x := xs[i]
-			next = x(next)
-		}
-		return next
 	}
 }
