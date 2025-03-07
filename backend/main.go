@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"websocketPractice/handler"
 
 	"github.com/coder/websocket"
 )
@@ -14,7 +15,7 @@ import (
 func main() {
 	r := http.NewServeMux()
 
-	r.HandleFunc("/ws", wsHandlerr)
+	r.HandleFunc("/ws", handler.WsHandler)
 	r.HandleFunc("POST /student", handleFuncWraper(handleAddStudent))
 
 	log.Println("Server started~")
@@ -68,6 +69,7 @@ func Broadcast(session *Session, ctx context.Context, message []byte) {
 		if err != nil {
 			log.Println("error sending message: %w")
 		}
+		log.Println("Broadcasted: ", websocket.MessageText)
 	}
 }
 
@@ -109,7 +111,7 @@ func wsHandlerr(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close(websocket.StatusAbnormalClosure, "")
 
 	mutex.Lock()
-	session, exists := Sessions[sessionID]
+	_, exists := Sessions[sessionID]
 	if !exists {
 		Sessions[sessionID] = &Session{
 			TeacherID:   teacherID,
@@ -117,7 +119,7 @@ func wsHandlerr(w http.ResponseWriter, r *http.Request) {
 			Connections: make(map[*websocket.Conn]bool),
 		}
 	}
-	log.Println(Sessions[sessionID].TeacherID)
+	log.Println(Sessions[sessionID])
 	mutex.Unlock()
 
 	students := Sessions[sessionID].Students
@@ -125,19 +127,10 @@ func wsHandlerr(w http.ResponseWriter, r *http.Request) {
 	msg, _ := json.Marshal(students)
 	conn.Write(r.Context(), websocket.MessageText, msg)
 
-	for {
-		_, _, err := conn.Read(r.Context())
-		if websocket.CloseStatus(err) != -1 {
-			break
-		}
-		if err != nil {
-			log.Println("error reading message:", err)
-			break
-		}
-	}
+	// mutex.Lock()
+	conn.Close(websocket.StatusNormalClosure, "")
 
-	mutex.Lock()
-	delete(session.Connections, conn)
+	// delete(session.Connections, conn)
 
 }
 
